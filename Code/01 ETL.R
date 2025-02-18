@@ -26,7 +26,9 @@ tab_census_top_names <- read_excel(file.path(dirs$input, 'Names_2010Census_Top10
   clean_names()
 
 
-tab_ribd_24 <- read_csv(file.path(dirs$input, 'FY23 Historical Reservations Full.csv'))
+tab_ribd_23 <- read_csv(file.path(dirs$input, 'FY23 Historical Reservations Full.csv'))
+
+tab_ribd_22 <- read.delim(file.path(dirs$input, 'FY22 Historical Reservations Full.csv'))
 
 # Clean Data --------------------------------------------------------------
 
@@ -54,11 +56,11 @@ tab_rogue_winners_comb1 <- bind_rows(tab_rogue_winners_25_1,
 
 tab_rogue_winners_comb2 <- tab_rogue_winners_comb1 %>% 
   transmute(last_name = str_to_upper(last_name),
-         initial = str_to_upper(initial),
-         entry_date = as_date(mdy(entry_date)),
-         group_size = as.numeric(group_size),
-         state = str_to_upper(state),
-         source)
+            initial = str_to_upper(initial),
+            entry_date = as_date(mdy(entry_date)),
+            group_size = as.numeric(group_size),
+            state = str_to_upper(state),
+            source)
 
 
 
@@ -103,8 +105,8 @@ tab_names_analysis <- tab_rogue_winners_comb2 %>%
   left_join(tab_census_top_names %>% 
               distinct(last_name = surname,
                        proportion_per_100_000_population))
-  
-  
+
+
 # this is all 3 years available
 tab_names_analysis %>% 
   count(last_name) %>% 
@@ -147,7 +149,12 @@ multiple_obs <- tab_names_analysis1 %>%
   group_by(concat_name, group_size) %>% 
   summarise(count = n()) %>% 
   filter(count > 1) %>% 
-  ungroup()
+  ungroup() %>% 
+  mutate(last_name = str_replace(concat_name, "^[^ ]* ", "")) %>% 
+  left_join(tab_census_top_names %>% 
+              distinct(last_name = surname,
+                       proportion_per_100_000_population)) %>% 
+  filter(is.na(proportion_per_100_000_population))
 
 
 multiple_obs %>% 
@@ -180,7 +187,7 @@ tab_names_analysis %>%
   filter(n() > 1) %>% 
   View()
 
-  
+
 tab_rogue_winners_comb2 %>% 
   filter(!is.na(initial)) %>% 
   mutate(concat_name = paste0(initial, ' ', last_name)) %>% 
@@ -194,9 +201,9 @@ tab_rogue_winners_comb2 %>%
 # RIBD --------------------------------------------------------------------
 
 # Exploring Dino/Green to see what we can learn
-dino_green_permits <- tab_ribd_24 %>% 
+dino_green_permits <- tab_ribd_23 %>% 
   filter(park == 'Dinosaur Green And Yampa River Permits')
-         
+
 
 dino_green_permits %>% 
   filter(inventorytype == 'LOTTERY_PERMIT') %>% 
@@ -231,7 +238,7 @@ dino_green_permits %>%
   count(startdate) %>% 
   ggplot()+
   geom_bar(aes(x = startdate, y = n), stat = 'identity')
-  
+
 #still more than I expected, but more reasonable with cancellations being roughly 30% of the time?
 
 # Working assumption: rows that have LOTTERY_PERMIT
@@ -243,13 +250,13 @@ lottery_dates <-
   dino_green_permits %>% 
   filter(inventorytype == 'LOTTERY_PERMIT') %>% 
   count(startdate) %>% 
-  mutate(type = 'lottery')
+  mutate(`Permit Type` = 'lottery')
 
 
 launch_dates <- dino_green_permits %>% 
   filter(inventorytype != 'LOTTERY_PERMIT') %>% 
   count(startdate) %>% 
-  mutate(type = 'launch')
+  mutate(`Permit Type` = 'launch')
 
 comb_dates <- bind_rows(lottery_dates,
                         launch_dates) %>% 
@@ -258,17 +265,28 @@ comb_dates <- bind_rows(lottery_dates,
   mutate(day_type = if_else(weekdays(startdate) %in% c('Saturday', 'Sunday'),
                             'Weekend',
                             'Weekday'))
-  
+
 
 ggplot(comb_dates)+
-  geom_line(aes(x = startdate, y = n, color = type))+
-  geom_smooth(aes(x = startdate, y = n, color = type), method = 'lm')+
+  geom_line(aes(x = startdate, y = n, color = `Permit Type`))+
+  geom_smooth(aes(x = startdate, y = n, color = `Permit Type`), method = 'lm')+
   geom_point(aes(x = startdate, y = n, shape = day_type))
 
 
 
-all_rivers <- tab_ribd_24 %>% 
+all_rivers <- tab_ribd_23 %>% 
+  mutate(year = 2023)
+bind_rows(tab_ribd_22 %>% 
+            mutate(year = 2022)) %>% 
   filter(str_detect(park, 'River'))
+
+
+all_rivers %>% 
+  distinct(equipmentdescription)
+
+all_rivers %>% filter(equipmentdescription == 'Boat')
+
+
 
 all_rivers %>% distinct(park) %>% View()
 
@@ -289,26 +307,41 @@ main_rivers <- all_rivers %>%
   filter(startdate > as_date('2023-05-01'),
          startdate < as_date('2023-10-01'),
          inventorytype != 'CAMPING') %>% 
-  mutate(type = if_else(inventorytype == 'PERMIT',
-                        'Launch Day',
-                        'Lottery Day'),
+  mutate(`Permit Type` = if_else(inventorytype == 'PERMIT',
+                                 'Launch Day',
+                                 'Lottery Day'),
          day_type = if_else(weekdays(startdate) %in% c('Saturday', 'Sunday'),
-                                   'Weekend',
-                                   'Weekday'))
+                            'Weekend',
+                            'Weekday'),
+         `Day Name` = weekdays(startdate),
+         `Day Name` = if_else(`Permit Type` == 'Lottery Day',
+                              `Day Name`,
+                              NA_character_),
+         `Day Name` = factor(`Day Name`, levels = c('Monday',
+                                                    'Tuesday',
+                                                    'Wednesday',
+                                                    'Thursday',
+                                                    'Friday',
+                                                    'Saturday',
+                                                    'Sunday'))
+  )
+
+
 
 main_rivers_gg <- main_rivers %>% 
-  group_by(park, startdate, type, day_type) %>% 
-  summarise(count = n()) %>% 
+  group_by(park, startdate, `Permit Type`, day_type, `Day Name`) %>% 
+  summarise(`Applications per Day` = n()) %>% 
   ungroup() %>% 
   split(.$park)
-  
+
 
 main_rivers_gg_plot <- main_rivers_gg %>% 
   imap(~ggplot(.x)+
-        geom_line(aes(x = startdate, y = count, color = type))+
-        geom_smooth(aes(x = startdate, y = count, color = type), method = 'lm')+
-        geom_point(aes(x = startdate, y = count, shape = day_type))+
-        labs(title = .y))
+         geom_line(aes(x = startdate, y = `Applications per Day`, color = `Permit Type`))+
+         geom_point(aes(x = startdate, y = `Applications per Day`, shape = `Day Name`), color = '#231650')+
+         scale_color_manual(values = c('Launch Day' = '#c68646', 'Lottery Day' = '#a5c5da'))+
+         labs(title = paste0(.y, ' - 2023'))+
+         theme_te())
 
 write_rds(main_rivers,
           file = file.path(dirs$output, glue::glue('River Data {Sys.Date()}.rds')))
@@ -320,4 +353,25 @@ main_rivers_gg_plot %>%
                 height = 6))
 
 
-  
+# Permit-Required Rivers
+permitted_rivers <- main_rivers %>% 
+  distinct(park, inventorytype) %>% 
+  group_by(park) %>% 
+  filter(n()>1) %>% 
+  ungroup() %>% 
+  ungroup() %>% 
+  left_join(main_rivers)
+
+permitted_rivers %>% 
+  count(park, inventorytype)
+# Seems like Rogue River has bad permit data, but that's okay because we don't care
+# about actual launch dates
+
+
+permitted_rivers %>% 
+  group_by(orderdate, park) %>% 
+  filter(n()>1) %>% View(
+  )
+
+
+
