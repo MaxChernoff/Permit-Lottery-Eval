@@ -28,7 +28,7 @@ tab_census_top_names <- read_excel(file.path(dirs$input, 'Names_2010Census_Top10
 
 tab_ribd_23 <- read_csv(file.path(dirs$input, 'FY23 Historical Reservations Full.csv'))
 
-tab_ribd_22 <- read.delim(file.path(dirs$input, 'FY22 Historical Reservations Full.csv'))
+tab_ribd_22 <- read.csv(file.path(dirs$input, 'FY22 Historical Reservations Full.csv'))
 
 # Clean Data --------------------------------------------------------------
 
@@ -275,12 +275,32 @@ ggplot(comb_dates)+
 
 
 all_rivers <- tab_ribd_23 %>% 
-  mutate(year = 2023)
-bind_rows(tab_ribd_22 %>% 
-            mutate(year = 2022)) %>% 
+  transmute(year = '2023',
+            park,
+            startdate, 
+            inventorytype,
+            month = month(startdate),
+            day = day(startdate)) %>% 
+  arrange(month, day) %>% 
+  mutate(month_day = paste(month, '-', day)) %>% 
+  filter(startdate > as_date('2023-05-01'),
+         startdate < as_date('2023-10-01')) %>% 
+  bind_rows(tab_ribd_22 %>% 
+              as_tibble() %>% 
+              transmute(year = '2022',
+                        park,
+                        startdate, 
+                        inventorytype,
+                        startdate = as_datetime(startdate),
+                        month = month(startdate),
+                        day = day(startdate)) %>% 
+              arrange(month, day) %>% 
+              mutate(month_day = paste(month, '-', day)) %>% 
+  filter(startdate > as_date('2022-05-01'),
+         startdate < as_date('2022-10-01'))) %>% 
   filter(str_detect(park, 'River'))
-
-
+            
+            
 all_rivers %>% 
   distinct(equipmentdescription)
 
@@ -304,9 +324,7 @@ main_rivers <- all_rivers %>%
                      # 'Blue River Campground (CO)',
                      # 'Green River Lakes - Bridger-Teton NF (WY)',
                      'Hells Canyon - Snake River (4 Rivers)')) %>% 
-  filter(startdate > as_date('2023-05-01'),
-         startdate < as_date('2023-10-01'),
-         inventorytype != 'CAMPING') %>% 
+         filter(inventorytype != 'CAMPING') %>% 
   mutate(`Permit Type` = if_else(inventorytype == 'PERMIT',
                                  'Launch Day',
                                  'Lottery Day'),
@@ -323,24 +341,26 @@ main_rivers <- all_rivers %>%
                                                     'Thursday',
                                                     'Friday',
                                                     'Saturday',
-                                                    'Sunday'))
-  )
+                                                    'Sunday')),
+         month_day = as_factor(month_day))
 
 
 
 main_rivers_gg <- main_rivers %>% 
-  group_by(park, startdate, `Permit Type`, day_type, `Day Name`) %>% 
+  group_by(park, month_day, `Permit Type`, day_type, `Day Name`, year) %>% 
   summarise(`Applications per Day` = n()) %>% 
   ungroup() %>% 
+  filter(`Permit Type` == 'Lottery Day') %>% 
+  arrange(month_day) %>% 
   split(.$park)
 
 
 main_rivers_gg_plot <- main_rivers_gg %>% 
   imap(~ggplot(.x)+
-         geom_line(aes(x = startdate, y = `Applications per Day`, color = `Permit Type`))+
-         geom_point(aes(x = startdate, y = `Applications per Day`, shape = `Day Name`), color = '#231650')+
-         scale_color_manual(values = c('Launch Day' = '#c68646', 'Lottery Day' = '#a5c5da'))+
-         labs(title = paste0(.y, ' - 2023'))+
+         geom_line(aes(x = month_day, y = `Applications per Day`, color = year, group = year))+
+         geom_point(aes(x = month_day, y = `Applications per Day`, shape = `Day Name`), color = '#231650')+
+         scale_color_manual(values = c('2022' = '#c68646', '2023' = '#a5c5da'))+
+         labs(title = paste0(.y))+
          theme_te())
 
 write_rds(main_rivers,
